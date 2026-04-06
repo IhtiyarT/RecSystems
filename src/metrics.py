@@ -37,7 +37,7 @@ class Metrics:
     def get_all(self, recommended, relevant, k):
         precision = self.precision_at_k(recommended, relevant, k)
         recall = self.recall_at_k(recommended, relevant, k)
-        ndcg = self.idcg(recommended, relevant, k)
+        ndcg = self.ndcg(recommended, relevant, k)
 
         return precision, recall, ndcg
     
