@@ -15,9 +15,9 @@ class Metrics:
 
         hits = len(set(recommended) & set(relevant))
         
-        return hits / len(relevant)
+        return hits / len(relevant) if len(relevant) else 0
     
-    def idcg(self, recommended, relevant, k):
+    def ndcg(self, recommended, relevant, k):
         recommended = recommended[:k]
 
         dcg = 0.0
@@ -33,6 +33,13 @@ class Metrics:
             return 0
         
         return dcg / idcg
+    
+    def get_all(self, recommended, relevant, k):
+        precision = self.precision_at_k(recommended, relevant, k)
+        recall = self.recall_at_k(recommended, relevant, k)
+        ndcg = self.idcg(recommended, relevant, k)
+
+        return precision, recall, ndcg
     
     def rmse(self, y_true, y_pred):
         y_true = np.array(y_true)
