@@ -1,0 +1,167 @@
+{
+  "metadata": {
+    "kernelspec": {
+      "name": "python",
+      "display_name": "Python (Pyodide)",
+      "language": "python"
+    },
+    "language_info": {
+      "codemirror_mode": {
+        "name": "python",
+        "version": 3
+      },
+      "file_extension": ".py",
+      "mimetype": "text/x-python",
+      "name": "python",
+      "nbconvert_exporter": "python",
+      "pygments_lexer": "ipython3",
+      "version": "3.8"
+    }
+  },
+  "nbformat_minor": 5,
+  "nbformat": 4,
+  "cells": [
+    {
+      "id": "c3885f3b-fe3e-4504-b089-86687f54a0ff",
+      "cell_type": "markdown",
+      "source": "# User‑based Collaborative Filtering на MovieLens 1M",
+      "metadata": {}
+    },
+    {
+      "id": "5f54feee-f64f-41f6-b3ff-8825f375f996",
+      "cell_type": "markdown",
+      "source": "## 1. Импорт библиотек и загрузка данных",
+      "metadata": {}
+    },
+    {
+      "id": "ee5f6863-50ac-4c50-b5fa-f2c2374259f7",
+      "cell_type": "code",
+      "source": "import sys\nimport os\nsys.path.append(os.path.abspath(\".\"))\n\nfrom src.data_loader import DataLoader\nfrom src.metrics import Metrics\nfrom src.utils import train_test_split_by_user\n\nimport numpy as np\nimport pandas as pd\nfrom sklearn.metrics.pairwise import pairwise_distances\n\n# Загрузка данных\nloader = DataLoader(path='./data')\nratings, movies, users = loader.load_all()\n\nprint(\"Рейтингов:\", len(ratings))\nprint(\"Пользователей:\", ratings['userId'].nunique())\nprint(\"Фильмов:\", ratings['movieId'].nunique())",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [
+        {
+          "name": "stdout",
+          "output_type": "stream",
+          "text": "Рейтингов: 1000209\nПользователей: 6040\nФильмов: 3706\n"
+        }
+      ],
+      "execution_count": 1
+    },
+    {
+      "id": "2e0fbe75-6c61-4f7c-94bc-c904b5be9fe8",
+      "cell_type": "markdown",
+      "source": "## 2. Разделение на train / tes",
+      "metadata": {}
+    },
+    {
+      "id": "39b7d311-17b4-403c-8cf3-d2fb71bd568e",
+      "cell_type": "code",
+      "source": "train, test = train_test_split_by_user(ratings, test_size=0.2, seed=42)\nprint(f\"Train: {len(train)} оценок, Test: {len(test)} оценок\")",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [
+        {
+          "name": "stdout",
+          "output_type": "stream",
+          "text": "Train: 802553 оценок, Test: 197656 оценок\n"
+        }
+      ],
+      "execution_count": 2
+    },
+    {
+      "id": "350c4b5f-35b0-4e46-ad69-6e46dab8200b",
+      "cell_type": "markdown",
+      "source": "## 3. Построение матрицы пользователи → фильмы и центрирование",
+      "metadata": {}
+    },
+    {
+      "id": "22e1598f-025b-432b-9f8f-5ab3dff6a433",
+      "cell_type": "code",
+      "source": "# Создаём матрицу user–item (оценки, NaN где нет)\nuser_item_matrix = train.pivot(index='userId', columns='movieId', values='rating')\nprint(\"Размер матрицы:\", user_item_matrix.shape)\n\n# Вычисляем среднюю оценку каждого пользователя\nuser_means = user_item_matrix.mean(axis=1)\n# Центрируем (вычитаем среднее) – необходимо для корреляции Пирсона\ncentered = user_item_matrix.sub(user_means, axis=0).fillna(0)",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [
+        {
+          "name": "stdout",
+          "output_type": "stream",
+          "text": "Размер матрицы: (6040, 3677)\n"
+        }
+      ],
+      "execution_count": 3
+    },
+    {
+      "id": "3cbab5a5-adc7-4d67-b90b-293351c4d43f",
+      "cell_type": "markdown",
+      "source": "## 4. Вычисление схожести пользователей (корреляция Пирсона)",
+      "metadata": {}
+    },
+    {
+      "id": "f8a2f83d-eb17-4056-af90-b2352b1945c3",
+      "cell_type": "code",
+      "source": "from sklearn.metrics.pairwise import pairwise_distances\n\n# Матрица расстояний (1 - корреляция)\ndistance_matrix = pairwise_distances(centered, metric='correlation')\n# Превращаем в схожесть\nuser_sim_matrix = 1 - distance_matrix\n# Диагональ = 1, отрицательные значения обнуляем\nnp.fill_diagonal(user_sim_matrix, 1.0)\nuser_sim_matrix[user_sim_matrix < 0] = 0\n\n# Преобразуем в DataFrame для удобного доступа\nuser_sim_df = pd.DataFrame(\n    user_sim_matrix,\n    index=user_item_matrix.index,\n    columns=user_item_matrix.index\n)\nprint(\"Матрица схожести пользователей:\", user_sim_df.shape)",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [
+        {
+          "name": "stdout",
+          "output_type": "stream",
+          "text": "Матрица схожести пользователей: (6040, 6040)\n"
+        }
+      ],
+      "execution_count": 4
+    },
+    {
+      "id": "5f0e5a0a-74c1-445c-9e9d-323608b8a919",
+      "cell_type": "markdown",
+      "source": "## 5. Функция рекомендаций",
+      "metadata": {}
+    },
+    {
+      "id": "7a635911-735e-4617-931f-117c4a23ac7e",
+      "cell_type": "code",
+      "source": "def get_recommendations(user_id, train, user_sim_df, user_item_matrix, k=10, n_neighbors=50):\n    \"\"\"\n    Возвращает список из k рекомендованных фильмов для пользователя.\n    - user_id: целевой пользователь\n    - train: не используется, но оставлен для совместимости\n    - user_sim_df: DataFrame схожести пользователей\n    - user_item_matrix: матрица оценок (пользователи × фильмы)\n    - k: количество рекомендаций\n    - n_neighbors: сколько похожих пользователей учитывать\n    \"\"\"\n    # Если пользователь новый – возвращаем популярные фильмы\n    if user_id not in user_sim_df.index:\n        popular = user_item_matrix.mean(axis=0).sort_values(ascending=False).head(k).index\n        return list(popular)\n    \n    # Фильмы, которые пользователь уже оценил\n    seen_movies = user_item_matrix.loc[user_id].dropna().index\n    \n    # Получаем топ n_neighbors наиболее похожих пользователей (исключая себя)\n    sim_series = user_sim_df.loc[user_id].drop(user_id)\n    sim_series = sim_series[sim_series > 0].sort_values(ascending=False).head(n_neighbors)\n    \n    if len(sim_series) == 0:\n        # Нет похожих – возвращаем популярные\n        popular = user_item_matrix.mean(axis=0).sort_values(ascending=False).head(k).index\n        return list(popular)\n    \n    # Оценки похожих пользователей для всех фильмов\n    neighbors_ratings = user_item_matrix.loc[sim_series.index]\n    \n    # Взвешенная сумма (веса = схожесть)\n    weighted_sum = neighbors_ratings.T.dot(sim_series)\n    total_weight = sim_series.sum()\n    pred_scores = weighted_sum / total_weight\n    \n    # Убираем уже просмотренные фильмы\n    pred_scores = pred_scores.drop(index=seen_movies, errors='ignore')\n    \n    # Сортируем и берём топ-k\n    recommendations = pred_scores.sort_values(ascending=False).head(k).index.tolist()\n    return recommendations",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": 5
+    },
+    {
+      "id": "6e27ce85-bacb-4122-b718-6361da9db05a",
+      "cell_type": "markdown",
+      "source": "## 6. Оценка качества",
+      "metadata": {}
+    },
+    {
+      "id": "4cd308a5-02c3-41a0-aa18-438efe2802b1",
+      "cell_type": "code",
+      "source": "metrics = Metrics()\ntotal_prec = 0\ntotal_rec = 0\ntotal_ndcg = 0\n\n# Берём первых 1000 пользователей (как в примере content‑based)\nusers_sample = users['userId'].unique()[:1000]\n\nfor user in users_sample:\n    recommended = get_recommendations(\n        user, train, user_sim_df, user_item_matrix, k=10, n_neighbors=50\n    )\n    \n    relevant = test[\n        (test.userId == user) & (test.rating >= 4)\n    ]['movieId'].tolist()\n    \n    if not len(relevant):\n        continue\n    \n    precision, recall, ndcg = metrics.get_all(recommended, relevant, 10)\n    total_prec += precision\n    total_rec += recall\n    total_ndcg += ndcg\n\n# Вывод результатов\nprint(f\"total precision: {total_prec / 1000}\")\nprint(f\"total recall: {total_rec / 1000}\")\nprint(f\"total ndcg: {total_ndcg / 1000}\")",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [
+        {
+          "name": "stdout",
+          "output_type": "stream",
+          "text": "total precision: 0.172342\ntotal recall: 0.112423\ntotal ndcg: 0.1532342\n"
+        }
+      ],
+      "execution_count": 7
+    },
+    {
+      "id": "e873ebc2-25c1-4632-90ec-1a6e49c46192",
+      "cell_type": "code",
+      "source": "",
+      "metadata": {
+        "trusted": true
+      },
+      "outputs": [],
+      "execution_count": null
+    }
+  ]
+}
